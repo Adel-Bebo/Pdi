@@ -60,7 +60,7 @@ canvas{position:absolute;left:0;top:0;width:595.28px;height:841.89px}#ink{pointe
   <label class="tg"><input type="checkbox" id="fd">Finger / mouse draw</label>
   <button class="dot" data-c="#111111" style="background:#111111"></button><button class="dot on" data-c="#1540c0" style="background:#1540c0"></button><button class="dot" data-c="#c62828" style="background:#c62828"></button>
   <select id="wd"><option value="0.9">Fine</option><option value="1.4" selected>Medium</option><option value="2.6">Bold</option></select>
-  <button id="un">↶</button><button id="re">↷</button><button id="ci">🗑 Page ink</button></div>
+  <button id="un">↶</button><button id="re">↷</button></div>
  <div id="prog"><i id="pb"></i><span id="pt"></span></div>
  <div id="main"><div id="hold"><div id="pg"><canvas id="bg"></canvas><div id="fl"></div><canvas id="ink"></canvas></div></div></div>
 </div>
@@ -125,12 +125,21 @@ function updNav(){document.querySelectorAll('#nav button').forEach((b,p)=>{const
 function updProg(){const p=pr(cur);$('pb').style.width=p.pct+'%';$('pt').textContent=`Items ${p.items}/${ITEMS.length} (${p.pct}%) · Sections ${p.secs}/15 · Sign-off result ${p.res?'set':'pending'}`}
 
 /* ---------- template preparation: clean working copy, original file untouched ---------- */
-async function prepare(){const{PDFDocument,PDFName}=PDFLib,d=await PDFDocument.load(RAW),form=d.getForm();
- for(const f of form.getFields())if(!FB[f.getName()])form.removeField(f);
- d.removePage(9);
- for(const p of d.getPages()){const a=p.node.Annots();if(!a)continue;for(let i=a.size()-1;i>=0;i--){const o=d.context.lookup(a.get(i));if(o&&o.get&&String(o.get(PDFName.of('Subtype')))==='/Stamp')a.remove(i)}}
- try{form.getTextField('sign_name').setText(undefined)}catch(e){}
- try{form.flatten()}catch(e){form.flatten({updateFieldAppearances:false})}
+async function prepare(){const{PDFDocument,PDFName,PDFDict,PDFStream,PDFRef,pushGraphicsState,popGraphicsState,translate,drawObject}=PDFLib,d=await PDFDocument.load(RAW),L=d.context;
+ d.removePage(9);let k=0;
+ for(const p of d.getPages()){const a=p.node.Annots();if(!a)continue;
+  for(let i=a.size()-1;i>=0;i--){const o=L.lookup(a.get(i));if(!(o instanceof PDFDict))continue;const t=String(o.get(PDFName.of('Subtype')));
+   if(t==='/Widget'){let tn='';try{tn=o.get(PDFName.of('T')).decodeText()}catch(e){}
+    if(tn==='sign_name'){const mk=L.lookup(o.get(PDFName.of('MK'))),bg=mk&&mk.get&&L.lookup(mk.get(PDFName.of('BG'))),cc=bg&&bg.asArray?bg.asArray().map(v=>v.asNumber()):null,rr=o.lookup(PDFName.of('Rect')).asArray().map(v=>v.asNumber());
+     p.drawRectangle({x:Math.min(rr[0],rr[2]),y:Math.min(rr[1],rr[3]),width:Math.abs(rr[2]-rr[0]),height:Math.abs(rr[3]-rr[1]),color:cc&&cc.length===3?PDFLib.rgb(cc[0],cc[1],cc[2]):PDFLib.rgb(1,.85,.8)});a.remove(i);continue}
+    let n=L.lookup(o.get(PDFName.of('AP')));n=n instanceof PDFDict?o.get(PDFName.of('AP')):null;
+    let ap=n&&L.lookup(L.lookup(n).get(PDFName.of('N')));let apRef=n&&L.lookup(n).get(PDFName.of('N'));
+    if(ap instanceof PDFDict&&!(ap instanceof PDFStream)){apRef=ap.get(PDFName.of('Off'));ap=apRef&&L.lookup(apRef)}
+    if(ap instanceof PDFStream&&apRef instanceof PDFRef){const r=o.lookup(PDFName.of('Rect')).asArray().map(v=>v.asNumber());
+     const nm=p.node.newXObject('Fx'+(k++),apRef);p.pushOperators(pushGraphicsState(),translate(Math.min(r[0],r[2]),Math.min(r[1],r[3])),drawObject(nm),popGraphicsState())}
+    a.remove(i)}
+   else if(t==='/Stamp')a.remove(i)}}
+ d.catalog.delete(PDFName.of('AcroForm'));
  return d.save()}
 async function init(){pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
  const{PDFDocument,StandardFonts}=PDFLib,md=await PDFDocument.create();HF=await md.embedFont(StandardFonts.Helvetica);CS=new Set(HF.getCharacterSet());
@@ -189,11 +198,11 @@ function nextEd(){const o=F.filter(f=>f.p===pg&&f.k==='t').sort((a,b)=>b.y-a.y||
 /* ---------- handwriting: Pointer Events; Pencil draws, finger scrolls ---------- */
 document.querySelectorAll('[data-t]').forEach(b=>b.onclick=()=>{tool=b.dataset.t;document.querySelectorAll('[data-t]').forEach(x=>x.classList.toggle('on',x===b));ta()});
 document.querySelectorAll('[data-c]').forEach(b=>b.onclick=()=>{color=b.dataset.c;document.querySelectorAll('[data-c]').forEach(x=>x.classList.toggle('on',x===b));if(tool!=='pen'){document.querySelector('[data-t=pen]').click()}});
-const ta=()=>$('pg').classList.toggle('fd',($('fd').checked||tool==='erase')&&tool!=='type');$('fd').onchange=ta;
+const ta=()=>$('pg').classList.toggle('fd',$('fd').checked&&tool!=='type');$('fd').onchange=ta;
 const xy=e=>{const r=$('pg').getBoundingClientRect();return[+((e.clientX-r.left)/r.width*PW).toFixed(2),+((e.clientY-r.top)/r.height*PH).toFixed(2)]};
 $('pg').addEventListener('touchstart',e=>{if(tool!=='type'&&[...e.changedTouches].some(t=>t.touchType==='stylus'))e.preventDefault()},{passive:false});
-function erase(pt){const a=strokes(),k=a.filter(s=>!s.p.some((q,i)=>{const o=s.p[i-1]||q,dx=q[0]-o[0],dy=q[1]-o[1],l=dx*dx+dy*dy||1,t=Math.max(0,Math.min(1,((pt[0]-o[0])*dx+(pt[1]-o[1])*dy)/l));return Math.hypot(o[0]+t*dx-pt[0],o[1]+t*dy-pt[1])<8}));if(k.length!==a.length){cur.ink[pg]=k;redrawInk()}}
-$('pg').addEventListener('pointerdown',e=>{if(!cur||st)return;const pen=e.pointerType==='pen',can=tool!=='type'&&(pen||((tool==='erase'||$('fd').checked)&&e.button===0));if(!can)return;
+function erase(pt){const a=strokes(),k=a.filter(s=>!s.p.some(q=>Math.hypot(q[0]-pt[0],q[1]-pt[1])<5));if(k.length!==a.length){cur.ink[pg]=k;redrawInk()}}
+$('pg').addEventListener('pointerdown',e=>{if(!cur||st)return;const pen=e.pointerType==='pen',can=tool!=='type'&&(pen||($('fd').checked&&e.button===0));if(!can)return;
  e.preventDefault();$('pg').setPointerCapture(e.pointerId);const eras=tool==='erase'||(pen&&(e.buttons&32)>0),p=xy(e);
  st={id:e.pointerId,eras,t0:Date.now(),d:0,snap:JSON.stringify(strokes()),cx:e.clientX,cy:e.clientY,s:null,last:p};
  if(eras)erase(p);else{st.s={c:color,w:+$('wd').value,p:[p]};strokes().push(st.s)}});
@@ -206,7 +215,6 @@ function endS(e){if(!st||e.pointerId!==st.id)return;const s=st;st=null;ignoreUnt
 $('pg').addEventListener('pointerup',endS);$('pg').addEventListener('pointercancel',endS);
 function undo(re){const h=hist[pg];if(!h)return;const a=re?h.r:h.u,b=re?h.u:h.r;if(!a.length)return;b.push(JSON.stringify(strokes()));cur.ink[pg]=JSON.parse(a.pop());redrawInk();dirty()}
 $('un').onclick=()=>undo(0);$('re').onclick=()=>undo(1);
-$('ci').onclick=async()=>{if(await ask('Erase ALL handwriting on this page?','Erase',true)){const h=hist[pg]||(hist[pg]={u:[],r:[]});h.u.push(JSON.stringify(strokes()));h.r=[];cur.ink[pg]=[];redrawInk();dirty()}};
 
 /* ---------- export: original template + overlay, flattened ---------- */
 const hx=h=>PDFLib.rgb(...[1,3,5].map(i=>parseInt(h.substr(i,2),16)/255));
@@ -223,8 +231,8 @@ async function build(r){const{PDFDocument,StandardFonts,rgb,LineCapStyle}=PDFLib
 async function doExport(r){toast('Building PDF…');let b;try{b=await build(r)}catch(e){console.error(e);modal('Export failed: '+esc(e.message),[{t:'OK'}]);return}
  const nm='Road_Sweeper_PDI_'+((r.vals.veh_r1_right||'NoVIN')+'_'+(r.vals.veh_r5_left||today())).replace(/[^\w.-]+/g,'-')+'.pdf',file=new File([b],nm,{type:'application/pdf'}),url=URL.createObjectURL(file),bs=[];
  if(navigator.canShare&&navigator.canShare({files:[file]}))bs.push({t:'Share / Save to Files',c:'pri',keep:1,f:()=>navigator.share({files:[file],title:nm}).catch(e=>{if(e.name!=='AbortError')toast('Share failed: '+e.message)})});
- bs.push({t:'Download',href:url,dl:nm},{t:'Open',href:url},{t:'Close'});
- modal('<b>PDF ready</b><br><span class="mut">'+esc(nm)+'</span><br><br>On iPad tap <b>Share / Save to Files</b>, then choose <b>Save to Files</b> and pick a folder. The template and your saved inspection are unchanged.',bs)}
+ if(!bs.length)bs.push({t:'Download',href:url,dl:nm});bs.push({t:'Close'});
+ modal('<b>PDF ready</b><br><span class="mut">'+esc(nm)+'</span><br><br>On iPad tap <b>Share / Save to Files</b>, then choose <b>Save to Files</b> and pick a folder. The PDF is A4: to print, open it in Files, tap Share, then Print (scale 100%). The template and your saved inspection are unchanged.',bs)}
 $('bExp').onclick=async()=>{await flush();doExport(cur)};
 init().catch(e=>{$('boot').textContent='Failed to start: '+e.message+' (check internet for first load)'});
 </script></body></html>
